@@ -56,11 +56,15 @@
             const cvsBg = document.getElementById('bg-canvas');
             const ctxBg = cvsBg.getContext('2d');
             const cvsMain = document.getElementById('main-canvas');
-            const ctxMain = cvsMain.getContext('2d');
+            const ctxMain = cvsMain.getContext("2d", {
+                desynchronized: true
+            });
             
             // Waveform Scroll Canvas
             let cvsWave = document.createElement('canvas');
-            let ctxWave = cvsWave.getContext('2d');
+            const ctxWave = cvsWave.getContext("2d", {
+                desynchronized: true
+            });
 
             /* --- INIT --- */
             function init() {
@@ -186,16 +190,79 @@
             /* --- ANALYSIS --- */
             async function getWeather() {
                 try {
-                    const ip = await (await fetch('https://ipapi.co/json/')).json();
-                    document.getElementById('geo-text').innerText = (ip.city || 'LOCAL').toUpperCase();
-                    const w = await (await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${ip.latitude}&longitude=${ip.longitude}&current_weather=true`)).json();
+                    let latitude = null;
+                    let longitude = null;
+                    let city = null;
+
+                    // ========= 1. GEOLOCATION API (самое точное) =========
+                    try {
+                        const pos = await new Promise((resolve, reject) => {
+                            navigator.geolocation.getCurrentPosition(resolve, reject, {
+                                enableHighAccuracy: true,
+                                timeout: 5000,
+                                maximumAge: 5000
+                            });
+                        });
+
+                        latitude = pos.coords.latitude;
+                        longitude = pos.coords.longitude;
+                        city = "LOCAL";
+
+                        console.log("Geo from device:", latitude, longitude);
+
+                    } catch (e) {
+                        console.warn("Device geolocation failed → trying ipapi…", e);
+                    }
+
+
+                    // ========= 2. IP API (fallback) =========
+                    if (latitude === null || longitude === null) {
+                        try {
+                            const geo = await (await fetch("https://ipapi.is/json/", { mode: "cors" })).json();
+
+                            latitude = geo.latitude;
+                            longitude = geo.longitude;
+                            city = geo.city || "LOCAL";
+
+                            console.log("Geo from IP:", latitude, longitude, city);
+
+                        } catch (e) {
+                            console.warn("IP geo failed → final fallback.", e);
+                        }
+                    }
+
+
+                    // ========= 3. Если ничего не удалось =========
+                    if (latitude === null || longitude === null) {
+                        document.getElementById('geo-text').innerText = "ОФФЛАЙН";
+                        state.weather = "clear";
+                        return;
+                    }
+
+                    // Показ города в UI
+                    document.getElementById('geo-text').innerText =
+                        (city || 'LOCAL').toUpperCase();
+
+
+                    // ========= 4. ПОГОДА =========
+                    const w = await (await fetch(
+                        `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current_weather=true`,
+                        { mode: "cors" }
+                    )).json();
+
                     const c = w.current_weather.weathercode;
+
                     if(c <= 3) state.weather = 'clear';
                     else if(c >= 95) state.weather = 'storm';
                     else if(c >= 71) state.weather = 'snow';
                     else if(c >= 51) state.weather = 'rain';
                     else state.weather = 'cloudy';
-                } catch(e) { console.log('Weather offline'); }
+
+                } catch (e) {
+                    console.warn("Weather failed:", e);
+                    document.getElementById('geo-text').innerText = "ОФФЛАЙН";
+                    state.weather = "clear";
+                }
             }
 
             let lastGenreCheck = 0;
@@ -228,7 +295,7 @@
                     electronic:'ЭЛЕКТРО', techno:'ТЕХНО', rock:'РОК', metal:'МЕТАЛ',
                     pop:'ПОП', jazz:'ДЖАЗ', blues:'БЛЮЗ', ambient:'ЭМБИЕНТ',
                     hiphop:'ХИП-ХОП', reggae:'РЕГГИ', latin:'ЛАТИНО', classical:'КЛАССИКА',
-                    folk:'ФОЛК', chanson:'ШАНСОН', rnb:'R&B', default:'МУЗЫКА'
+                    folk:'ФОЛК', chanson:'ШАНСОН', rnb:'R&B', default:'НАРОДНАЯ'
                 };
                 document.getElementById('genre-text').innerText = names[g] || 'МУЗЫКА';
             }
